@@ -19,7 +19,7 @@ steps:
   displayName: 'Install dependencies'
 
 - script: |
-    pylint calculator_app 
+    pylint -m pylint calculator_app 
   displayName: 'Static analysis (pylint)'
 
 - script: |
