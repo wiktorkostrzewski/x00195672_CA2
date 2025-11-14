@@ -18,10 +18,6 @@ steps:
   displayName: 'Install dependencies'
 
 - script: |
-    python -m pip install pylint
-  displayName: 'Install pylint globally'
-
-- script: |
     pylint calculator_app 
   displayName: 'Static analysis (pylint)'
 
