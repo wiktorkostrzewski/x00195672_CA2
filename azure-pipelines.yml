@@ -19,7 +19,7 @@ steps:
   displayName: 'Install dependencies'
 
 - script: |
-    python -m pylint --exit-zero calculator_app
+    python -m pylint calculator_app tests
   displayName: 'Static analysis (pylint)'
 
 - script: |
