@@ -19,13 +19,11 @@ class TestCalculator:
         assert calculator.subtract(5, 3) == 2
         assert calculator.subtract(0, 1) == -1
 
-    
     def test_multiply(self, calculator):
         """A test of the multiply function"""
         assert calculator.multiply(4, 3) == 12
         assert calculator.multiply(-1, 5) == -5
 
-    
     def test_divide(self, calculator):
         """A test of the divide function"""
         assert calculator.divide(10, 2) == 5
