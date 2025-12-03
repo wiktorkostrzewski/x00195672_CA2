@@ -4,31 +4,194 @@ trigger:
       - main
       - development
 
-pool:
-  vmImage: 'ubuntu-latest'
+pr:
+  branches:
+    include:
+      - main
 
-steps:
-- task: UsePythonVersion@0
-  inputs:
-    versionSpec: '3.10'
+variables:
+  pythonVersion: '3.10'
 
-- script: |
-    python -m pip install --upgrade pip
-    python -m pip install -r requirements.txt
-    python -m pip install pytest pytest-cov pylint
-  displayName: 'Install dependencies'
+stages:
 
-- script: |
-    python -m pylint calculator_app tests
-  displayName: 'Static analysis (pylint)'
+- stage: Build_Test
+  displayName: 'Build & Unit Tests'
+  jobs:
+  - job: Build
+    displayName: 'Build and test'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: $(pythonVersion)
 
-- script: |
-    python -m pytest --cov=calculator_app --cov-report=xml --cov-fail-under=80
-  displayName: 'Run unit tests with coverage'
+    - script: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+      displayName: 'Install dependencies'
 
-- task: PublishCodeCoverageResults@1
-  inputs:
-    codeCoverageTool: 'Cobertura'
-    summaryFileLocation: 'coverage.xml'
-    pathToSources: 'calculator_app'
-  displayName: 'Publish coverage report'
+    - script: |
+        pylint calculator_app tests
+      displayName: 'Static analysis'
+
+    - script: |
+        pytest tests --cov=calculator_app --cov-report=xml --cov-fail-under=80 --junitxml=test-results.xml
+      displayName: 'Unit tests with coverage'
+
+    - task: PublishTestResults@2
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test-results.xml'
+
+    - task: PublishCodeCoverageResults@1
+      inputs:
+        codeCoverageTool: 'Cobertura'
+        summaryFileLocation: 'coverage.xml'
+        pathToSources: 'calculator_app'
+
+    - task: ArchiveFiles@2
+      inputs:
+        rootFolderOrFile: '$(System.DefaultWorkingDirectory)'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/drop.zip'
+        replaceExistingArchive: true
+
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+        ArtifactName: 'drop'
+        publishLocation: 'Container'
+
+- stage: Security_Tests
+  displayName: 'Security Tests'
+  dependsOn: Build_Test
+  condition: succeeded()
+  jobs:
+  - job: Security
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - download: current
+      artifact: drop
+
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: $(pythonVersion)
+
+    - script: |
+        unzip drop/drop.zip -d app
+        cd app
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install bandit pip-audit
+      displayName: 'Install security tools'
+
+    - script: |
+        cd app
+        bandit -r calculator_app calculator_web.py -f xml -o bandit-report.xml
+        pip-audit -r requirements.txt --output pip-audit-report.json
+      displayName: 'Run security tests'
+
+- stage: Deploy_Test
+  displayName: 'Deploy to Test'
+  dependsOn: Security_Tests
+  condition: succeeded()
+  jobs:
+  - deployment: DeployToTest
+    environment: 'test'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: drop
+
+          - script: |
+              mkdir -p $(Pipeline.Workspace)/test_app
+              unzip $(Pipeline.Workspace)/drop/drop.zip -d $(Pipeline.Workspace)/test_app
+            displayName: 'Extract artefact'
+
+- stage: Performance_Tests
+  displayName: 'Performance Tests'
+  dependsOn: Deploy_Test
+  condition: succeeded()
+  jobs:
+  - job: Performance
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - download: current
+      artifact: drop
+
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: $(pythonVersion)
+
+    - script: |
+        unzip drop/drop.zip -d app
+        cd app
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install locust
+        nohup python calculator_web.py > flask.log 2>&1 &
+        echo $! > flask.pid
+        sleep 5
+        locust -f performance/locust.py --headless -u 10 -r 2 -t 30s -H http://127.0.0.1:1234
+        kill $(cat flask.pid)
+      displayName: 'Run Locust'
+
+- stage: UAT
+  displayName: 'UAT Tests'
+  dependsOn: Performance_Tests
+  condition: succeeded()
+  jobs:
+  - job: RunUAT
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - download: current
+      artifact: drop
+
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: $(pythonVersion)
+
+    - script: |
+        unzip drop/drop.zip -d app
+        cd app
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install selenium webdriver-manager pytest
+        nohup python calculator_web.py > flask.log 2>&1 &
+        echo $! > flask.pid
+        sleep 5
+        export BASE_URL=http://127.0.0.1:1234
+        pytest selenium_uat --junitxml=uat-results.xml
+        kill $(cat flask.pid)
+      displayName: 'Run Selenium UAT'
+
+    - task: PublishTestResults@2
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'app/uat-results.xml'
+
+- stage: Deploy_Prod
+  displayName: 'Deploy to Prod'
+  dependsOn: UAT
+  condition: succeeded()
+  jobs:
+  - deployment: DeployToProd
+    environment: 'prod'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: drop
+
+          - script: |
+              mkdir -p $(Pipeline.Workspace)/prod_app
+              unzip $(Pipeline.Workspace)/drop/drop.zip -d $(Pipeline.Workspace)/prod_app
+            displayName: 'Extract artefact'

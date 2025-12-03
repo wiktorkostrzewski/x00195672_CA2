@@ -71,3 +71,40 @@ When it comes to testing startegy that was implemented using pytest which I used
 ## Troubleshooting Guide
 As for troubleshooting the application, two things I encountered intitialy when working on the applicaiton were that the pipeline was not detecting pylint or pytest, where a message "module not found" occured. This was resolved with the following command "python -m pip install pytest pytest cov pylint". Another issue that I already talked about as well, but needs to be mentioned in this section, is the fact that for the branch protection rule, if it were to be missing, its caused due to the fact that the repository is set to private instead of public. Changing it to public fixes the issue. Last troubleshooting tip would be, if the coverage is failing, make sure that all the functions have a test.
 
+## Environment Setup and Configuration
+For the environment set up and configuration of this project starting off im using python 3.10 and several other tools that are used for testing, security or automation, and when it comes to automation all of it is handled by azure devops pipeline 
+
+- we use "UsePythonVersion@0 to set the correct runtime python version of 3.10
+- The dependencies are installed using "pip install -r requirements.txt" as mentioned before its also worth to mention that you need to have an up to date version of pip installed in which case we could run "python -m pip install --upgrade pip"
+- as for the installation of UAT, Bandit, pip-audit or locust for performance testing the installation are done during run time directly in the each of the stages so once locust is beinmg run its only then that locust is actually being installed
+- the pipeline extracts build artifacts before deploying using "unzip drop/drop.zip -d app" before deploying
+- and as for the UAT & Performance tests the flask servers are run in the background using "nohup python calculator_web.py > flask.log 2>&1 &"
+echo $! > flask.pid
+
+## Deployment Process
+The Deployment process is a multi-stage continuous delivery process in which all the previous stages have to work/pass tests in order to reach production, this ensures the whole pipeline works in this case our multi stage pipeline follows this structure 
+-Build & Test Stage
+-Security Testes Stage
+-Deploy to Tests Stage
+-Performance Tests Stage 
+-UAT Stage 
+-Deploy to Production Stage
+
+![alt text](screenshots/deployment_process.png)
+
+## Security and Performance Testing
+For Security Bandit was used as well as pip-audit. Bandit checks security issues in the python code "bandit -r calculator_app calculator_web.py -f xml -o bandit-report.xml" this is the piece of code where we use Bandit, while pip-audit scans dependencies for any issues used with the following code "pip-audit -r requirements.txt --output pip-audit-report.json". when it comes to performance Locust was used with this piece of code "locust -f performance/locust.py --headless -u 10 -r 2 -t 30s -H http://127.0.0.1:1234" so here we essentially set the amount of users to 10 add 2 users every second and the duration is 30 seconds.
+
+![alt text](screenshots/security.png)
+![alt text](screenshots/performance.png)
+
+## UAT Testing with Selenium
+The User Acceptance Testing is started off with the set up of a flask server after which the local server is used which in this case is the http 1234 server "export BASE_URL=http://127.0.0.1:1234" and "pytest selenium_uat --junitxml=uat-results.xml" this executes the tests essentailly opening  a real chrome webdriver and performing tests on the calculations as if another person would.
+
+![alt text](screenshots/UAT.png)
+
+## Pipeline Approval Gates
+The approval gates implemented through githubs branch protection where the following protection is applied "Require at least one approval"
+this stops pull request to be automatically created by the developer and needs to be approved by another person during the pull request assuming the pipeline passes all the tests, along deploy to prod also needs to be approved before being executed.
+
+![alt text](screenshots/prod.png)
